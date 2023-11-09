@@ -40,44 +40,43 @@ ReadableStreamSource<T> _createReadableStreamSourceFromStream<T>(
 ReadableStreamSource<T>
     _createReadableStreamSourceFromStreamWithBackPressure<T>(Stream<T> stream) {
   late final StreamSubscription<T> subscription;
+  Timer? backpressureTimer;
 
   final readableStream = ReadableStreamSource<T>(
     start: allowInterop((controller) {
-      var uploadedData = 0;
-
       subscription = stream.listen(
-        (event) async {
+        (event) {
           controller.enqueue(event);
 
-          print(controller.desiredSize);
-
-          if (controller.desiredSize < 0) {
+          if (controller.desiredSize < 0 && backpressureTimer == null) {
             subscription.pause();
 
-            while (true) {
-              await Future.delayed(const Duration(milliseconds: 300), () {});
+            backpressureTimer =
+                Timer.periodic(const Duration(milliseconds: 300), (timer) {
               if (controller.desiredSize > 0) {
-                print('desiredSize > 0');
-                print(controller.desiredSize);
-                print('subscription.resume()');
                 subscription.resume();
-                break;
+                backpressureTimer?.cancel();
+                backpressureTimer = null;
               }
-            }
+            });
           }
-
-          uploadedData += (event as List<int>).length;
-          print('uploadedData: $uploadedData');
         },
         onDone: () {
-          print(
-              'onDone: uploadedData: $uploadedData, desiredSize: ${controller.desiredSize}');
+          backpressureTimer?.cancel();
           controller.close();
+        },
+        onError: (error) {
+          backpressureTimer?.cancel();
+          controller.error(error);
+          subscription.cancel();
         },
       );
     }),
     cancel: allowInterop(
-      (reason) async => subscription.cancel(),
+      (reason) async {
+        backpressureTimer?.cancel();
+        await subscription.cancel();
+      },
     ),
   );
 
